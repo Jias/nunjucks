@@ -2,6 +2,7 @@
 
 (function() {
 var modules = {};
+// file: object.js
 (function() {
 
 // A simple class system, more documentation to come
@@ -65,6 +66,7 @@ function extend(cls, name, props) {
 
 modules['object'] = extend(Object, "Object", {});
 })();
+// file: lib.js
 (function() {
 var ArrayProto = Array.prototype;
 var ObjProto = Object.prototype;
@@ -344,6 +346,7 @@ exports.keys = function(obj) {
     }
 }
 })();
+// file: nodes.js
 (function() {
 var util = modules["util"];
 var lib = modules["lib"];
@@ -441,14 +444,14 @@ var AsyncEach = For.extend("AsyncEach");
 var AsyncAll = For.extend("AsyncAll");
 var Macro = Node.extend("Macro", { fields: ['name', 'args', 'body'] });
 var Caller = Macro.extend("Caller");
-var Import = Node.extend("Import", { fields: ['template', 'target'] });
+var Import = Node.extend("Import", { fields: ['template', 'target', 'withContext'] });
 var FromImport = Node.extend("FromImport", {
-    fields: ['template', 'names'],
+    fields: ['template', 'names', 'withContext'],
 
-    init: function(lineno, colno, template, names) {
+    init: function(lineno, colno, template, names, withContext) {
         this.parent(lineno, colno,
                     template,
-                    names || new NodeList());
+                    names || new NodeList(), withContext);
     }
 });
 var FunCall = Node.extend("FunCall", { fields: ['name', 'args'] });
@@ -650,6 +653,7 @@ modules['nodes'] = {
     printNodes: printNodes
 };
 })();
+// file: runtime.js
 (function() {
 var lib = modules["lib"];
 var Obj = modules["object"];
@@ -990,6 +994,7 @@ modules['runtime'] = {
     asyncAll: asyncAll
 };
 })();
+// file: lexer.js
 (function() {
 var lib = modules["lib"];
 
@@ -1289,7 +1294,7 @@ Tokenizer.prototype.parseString = function(delimiter) {
 };
 
 Tokenizer.prototype._matches = function(str) {
-    if(this.index + str.length > this.length) {
+    if(this.index + str.length > this.len) {
         return null;
     }
 
@@ -1435,6 +1440,7 @@ modules['lexer'] = {
     TOKEN_REGEX: TOKEN_REGEX
 };
 })();
+// file: parser.js
 (function() {
 var lexer = modules["lexer"];
 var nodes = modules["nodes"];
@@ -1691,6 +1697,29 @@ var Parser = Object.extend({
                                 [macroCall]);
     },
 
+    parseWithContext: function() {
+        var tok = this.peekToken();
+
+        var withContext = null;
+
+        if(this.skipSymbol('with')) {
+            withContext = true;
+        }
+        else if(this.skipSymbol('without')) {
+            withContext = false;
+        }
+
+        if(withContext !== null) {
+            if(!this.skipSymbol('context')) {
+                this.fail('parseFrom: expected context after with/without',
+                            tok.lineno,
+                            tok.colno);
+            }
+        }
+
+        return withContext;
+    },
+
     parseImport: function() {
         var importTok = this.peekToken();
         if(!this.skipSymbol('import')) {
@@ -1708,10 +1737,15 @@ var Parser = Object.extend({
         }
 
         var target = this.parsePrimary();
+
+        var withContext = this.parseWithContext();
+
         var node = new nodes.Import(importTok.lineno,
                                     importTok.colno,
                                     template,
-                                    target);
+                                    target,
+                                    withContext);
+
         this.advanceAfterBlockEnd(importTok.value);
 
         return node;
@@ -1724,10 +1758,6 @@ var Parser = Object.extend({
         }
 
         var template = this.parsePrimary();
-        var node = new nodes.FromImport(fromTok.lineno,
-                                        fromTok.colno,
-                                        template,
-                                        new nodes.NodeList());
 
         if(!this.skipSymbol('import')) {
             this.fail("parseFrom: expected import",
@@ -1735,7 +1765,8 @@ var Parser = Object.extend({
                             fromTok.colno);
         }
 
-        var names = node.names;
+        var names = new nodes.NodeList(),
+            withContext;
 
         while(1) {
             var nextTok = this.peekToken();
@@ -1781,9 +1812,15 @@ var Parser = Object.extend({
             else {
                 names.addChild(name);
             }
+
+            withContext = this.parseWithContext();
         }
 
-        return node;
+        return new nodes.FromImport(fromTok.lineno,
+                                    fromTok.colno,
+                                    template,
+                                    names,
+                                    withContext);
     },
 
     parseBlock: function() {
@@ -2319,7 +2356,7 @@ var Parser = Object.extend({
                 val = false;
             }
             else {
-                this.fail("invalid boolean: " + tok.val,
+                this.fail("invalid boolean: " + tok.value,
                           tok.lineno,
                           tok.colno);
             }
@@ -2605,6 +2642,7 @@ modules['parser'] = {
     }
 };
 })();
+// file: transformer.js
 (function() {
 var nodes = modules["nodes"];
 var lib = modules["lib"];
@@ -2841,6 +2879,7 @@ modules['transformer'] = {
     transform: transform
 };
 })();
+// file: compiler.js
 (function() {
 var lib = modules["lib"];
 var parser = modules["parser"];
@@ -3374,7 +3413,7 @@ var Compiler = Object.extend({
             var id = ids[i];
             var name = target.value;
 
-            this.emitLine('frame.set("' + name + '", ' + id + ', true);'); 
+            this.emitLine('frame.set("' + name + '", ' + id + ', true);');
 
             // We are running this for every var, but it's very
             // uncommon to assign to multiple vars anyway
@@ -3738,7 +3777,9 @@ var Compiler = Object.extend({
         this.emitLine(', ' + this.makeCallback(id));
         this.addScopeLevel();
 
-        this.emitLine(id + '.getExported(' + this.makeCallback(id));
+        this.emitLine(id + '.getExported(' +
+            (node.withContext ? 'context.getVariables(), frame.push(), ' : '') +
+            this.makeCallback(id));
         this.addScopeLevel();
 
         frame.set(target, id);
@@ -3759,7 +3800,9 @@ var Compiler = Object.extend({
         this.emitLine(', ' + this.makeCallback(importedId));
         this.addScopeLevel();
 
-        this.emitLine(importedId + '.getExported(' + this.makeCallback(importedId));
+        this.emitLine(importedId + '.getExported(' +
+            (node.withContext ? 'context.getVariables(), frame.push(), ' : '') +
+            this.makeCallback(importedId));
         this.addScopeLevel();
 
         lib.each(node.names.children, function(nameNode) {
@@ -3964,6 +4007,7 @@ modules['compiler'] = {
     Compiler: Compiler
 };
 })();
+// file: filters.js
 (function() {
 var lib = modules["lib"];
 var r = modules["runtime"];
@@ -4404,6 +4448,7 @@ filters.e = filters.escape;
 
 modules['filters'] = filters;
 })();
+// file: globals.js
 (function() {
 
 function cycler(items) {
@@ -4472,6 +4517,7 @@ var globals = {
 
 modules['globals'] = globals;
 })();
+// file: loader.js
 (function() {
 var Obj = modules["object"];
 var lib = modules["lib"];
@@ -4496,6 +4542,7 @@ var Loader = Obj.extend({
 
 modules['loader'] = Loader;
 })();
+// file: web-loaders.js
 (function() {
 var Loader = modules["loader"];
 
@@ -4566,6 +4613,7 @@ modules['web-loaders'] = {
     WebLoader: WebLoader
 };
 })();
+// file: loaders.js
 (function() {
 if(typeof window === 'undefined' || window !== this) {
     modules['loaders'] = modules["node-loaders"];
@@ -4574,6 +4622,7 @@ else {
     modules['loaders'] = modules["web-loaders"];
 }
 })();
+// file: environment.js
 (function() {
 var path = modules["path"];
 var lib = modules["lib"];
@@ -4937,14 +4986,24 @@ var Template = Obj.extend({
         }.bind(this));
     },
 
-    getExported: function(cb) {
+    getExported: function(ctx, frame, cb) {
+        if (typeof ctx === 'function') {
+            cb = ctx;
+            ctx = {};
+        }
+
+        if (typeof frame === 'function') {
+            cb = frame;
+            frame = null;
+        }
+
         this.compile();
 
         // Run the rootRenderFunc to populate the context with exported vars
-        var context = new Context({}, this.blocks);
+        var context = new Context(ctx || {}, this.blocks);
         this.rootRenderFunc(this.env,
                             context,
-                            new Frame(),
+                            frame || new Frame(),
                             runtime,
                             function() {
                                 cb(null, context.getExported());
@@ -4969,6 +5028,7 @@ var Template = Obj.extend({
                                           this.env.extensionsList,
                                           this.path,
                                           this.env.lexerTags);
+
             var func = new Function(source);
             props = func();
         }

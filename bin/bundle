@@ -26,6 +26,7 @@ echo "var modules = {};" >> "$output"
 
 for file in $files; do
     name=${file%%.*}
+    echo "// file: $file" >> "$output"
     echo "(function() {" >> "$output"
     cat "src/$file" | \
         perl -ne 's/^(.*)require\(\W*([\w-]*)\W*\)(.*)$/$1modules["$2"]$3/; print' | \
