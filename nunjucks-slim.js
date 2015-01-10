@@ -352,6 +352,11 @@
         // Frames keep track of scoping both at compile-time and run-time so
         // we know how to access variables. Block tags can introduce special
         // variables, for example.
+        /*
+        var foo = new nunjucks.runtime.Frame();
+        foo.set('bar.baz', 'hello');
+        foo.get('bar') // {baz: "hello"}
+        */
         var Frame = Obj.extend({
             init: function(parent) {
                 this.variables = {};
@@ -394,6 +399,7 @@
             },
 
             lookup: function(name) {
+                debugger;
                 var p = this.parent;
                 var val = this.variables[name];
                 if (val !== undefined && val !== null) {
@@ -419,6 +425,10 @@
                 return this.parent;
             }
         });
+
+console.log('Frame');
+console.dir(Frame);
+console.log(new Frame());
 
         function makeMacro(argNames, kwargNames, func) {
             return function() {
